@@ -1,11 +1,15 @@
 //namespaces limits what we can see from inside the container
 //control groups limits the resources
+
 package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"syscall"
 )
 
@@ -39,11 +43,6 @@ func run() {
 func child() {
 	fmt.Printf("Running %v as %d\n", os.Args[2:], os.Getpid())
 
-	cmd := exec.Command(os.Args[2], os.Args[3:]...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
 	syscall.Sethostname([]byte("container"))
 
 	//change the root directory for this process
@@ -55,8 +54,37 @@ func child() {
 	//so that the kernel knows that it has to populate proc in the container_filesystem
 	syscall.Mount("proc", "proc", "proc", 0, "")
 
+	cg()
+	
+	cmd := exec.Command(os.Args[2], os.Args[3:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
 	cmd.Run()
 
 	syscall.Unmount("/proc", 0)
 
+}
+
+func cg() {
+
+	cgroups := "/sys/fs/cgroup/"
+	pids := filepath.Join(cgroups, "pids")
+	err := os.MkdirAll(filepath.Join(pids, "container_from_scratch"), 0755)
+	if err != nil && !os.IsExist(err) {
+		panic(err)
+	}
+	// Setting max process our container can create
+	must(ioutil.WriteFile(filepath.Join(pids, "container_from_scratch/pids.max"), []byte("20"), 0700))
+	// Removes the new cgroup after the container exits
+	must(ioutil.WriteFile(filepath.Join(pids, "container_from_scratch/notify_on_release"), []byte("1"), 0700))
+	must(ioutil.WriteFile(filepath.Join(pids, "container_from_scratch/cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0700))
+
+}
+
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
 }
